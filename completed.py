@@ -36,7 +36,7 @@ with PdfPages("final_report.pdf") as pdf:
     
     ax1.axis("off")
     
-    ax1.text(0.5, 1.05, "REPORT CARD ", #FOR MAIN HEADIND 
+    ax1.text(0.5, 1.05, "REPORT CARD ", #FOR MAIN HEADING 
          ha="center", va="bottom",
          fontsize=14, fontweight="bold")
     ax1.text(0.0, 0.98, "Name:", # coordinates
