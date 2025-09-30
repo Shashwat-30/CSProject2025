@@ -2,7 +2,7 @@
 main.py - Integrated Student Result Management System
 Supports: Students, Subjects, Exams, Marks, PDF Reports, ML Predictions
 """
-# Jaruri modules
+# import nessesary modules
 import os
 import joblib
 import pandas as pd
@@ -10,15 +10,17 @@ import mysql.connector as sqlconn
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.backends.backend_pdf import PdfPages
+import hashlib
+import getpass
 
-# Khali mat chhodna
+# Credentials
 DB_CONFIG = {
     'host':'sql12.freesqldatabase.com',
     'database':'sql12800214',
     'user':'sql12800214',
     'password':'d9vxZmJWA1'
 }
-MODEL_PATH = r"D:\Python\CSProject2025\best_exam4_predictor.pkl"
+MODEL_PATH = r""    # Add 'best_exam4_predictor.pkl' path
 
 # DATABASE Connection
 def get_connection():
@@ -33,13 +35,27 @@ def get_connection():
 try:
     DB = get_connection()
     CUR = DB.cursor()
-    print("✅ Connected to database.")
+    print("Connected to database.")
 except Exception as e:
-    print("❌ DB connection failed:", e)
+    print("DB connection failed:", e)
     DB, CUR = None, None
 
-# CREATE TABLES, agar nhi hai toh!
+def hash_password(password):
+    return hashlib.sha256(password.encode()).hexdigest()
+
+# CREATE TABLES, if not exist
 def init_tables():
+
+    # User Table
+    CUR.execute( """
+    CREATE TABLE IF NOT EXISTS users (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        username VARCHAR(50) UNIQUE NOT NULL,
+        password_hash VARCHAR(255) NOT NULL
+    )
+    """)
+
+    # Students Table
     CUR.execute("""
         CREATE TABLE IF NOT EXISTS students (
             id INT PRIMARY KEY,
@@ -51,6 +67,7 @@ def init_tables():
         )
     """)
 
+    # Subjects Table
     CUR.execute("""
         CREATE TABLE IF NOT EXISTS subjects (
             subject_id INT AUTO_INCREMENT PRIMARY KEY,
@@ -58,16 +75,17 @@ def init_tables():
         )
     """)
 
+    # Exams Table
     CUR.execute("""
         CREATE TABLE IF NOT EXISTS exams (
             exam_id INT AUTO_INCREMENT PRIMARY KEY,
             exam_name VARCHAR(30),
-            exam_no INT,
             max_written FLOAT,
             max_practical FLOAT
         )
     """)
 
+    # Marks Table
     CUR.execute("""
         CREATE TABLE IF NOT EXISTS marks (
             id INT,
@@ -83,13 +101,52 @@ def init_tables():
         )
     """)
     DB.commit()
-    print("✅ All tables ensured.")
+    print("All tables ensured.")
 
 init_tables()
 
 # BASIC OPERATIONS
+
+def add_teacher(username, password):
+    try:
+        sql = "INSERT INTO users (username,password_hash) VALUES (%s,%s)"
+        CUR.execute(sql, (username, hash_password(password)))
+        DB.commit()
+        print("Teacher added.")
+    except:
+        print("Username already exists.")
+
+def login():
+    # If no users exist, force creating the first teacher
+    CUR.execute("SELECT COUNT(*) FROM users")
+    count = CUR.fetchone()[0]
+    if count == 0:
+        print("No teachers found in the system. Please create the first teacher account.")
+        username = input("Choose a username: ").strip()
+        password = getpass.getpass("Choose a password: ")
+        add_teacher(username, password)
+        print("First teacher account created. Please login now.")
+
+    for attempt in range(3):  # Allow max 3 attempts
+        username = input("Username: ").strip()
+        password = getpass.getpass("Password: ").strip()
+        sql = "SELECT password_hash FROM users WHERE username=%s"
+        CUR.execute(sql, (username,))
+        row = CUR.fetchone()
+        if not row:
+            print("Invalid username.")
+            continue
+        if hash_password(password) == row[0]:
+            print(f"Welcome, {username} (teacher)")
+            return True
+        else:
+            print("Invalid password.")
+    
+    print("Too many failed attempts. Exiting...")
+    return False
+
 def insert_student():
-    i = int(input("Enter ID: "))
+    i = int(input("\nEnter ID: "))
     nm = input("Enter Name: ").upper()
     cl = input("Enter Class (e.g. XII-A): ").upper()
     g = input("Enter Gender: ").upper()
@@ -97,41 +154,51 @@ def insert_student():
     att = float(input("Enter Attendance %: "))
     CUR.execute("INSERT INTO students VALUES (%s,%s,%s,%s,%s,%s)", (i,nm,cl,g,h,att))
     DB.commit()
-    print("✅ Student inserted.")
+    print("Student inserted.")
 
 def insert_subject():
-    subj = input("Enter Subject Name: ").upper()
+    subj = input("\nEnter Subject Name: ").upper()
     CUR.execute("INSERT INTO subjects (subject_name) VALUES (%s)", (subj,))
     DB.commit()
-    print("✅ Subject inserted.")
+    print("Subject inserted.")
 
 def insert_exam():
-    ename = input("Enter Exam Name: ").upper()
-    eno = int(input("Enter Exam Number (1-4): "))
+    ename = input("\nEnter Exam Name: ").upper()
     mw = float(input("Enter Max Written Marks: "))
     mp = float(input("Enter Max Practical Marks: "))
-    CUR.execute("INSERT INTO exams (exam_name,exam_no,max_written,max_practical) VALUES (%s,%s,%s,%s)", (ename,eno,mw,mp))
+    CUR.execute("INSERT INTO exams (exam_name,exam_no,max_written,max_practical) VALUES (%s,%s,%s)", (ename,mw,mp))
     DB.commit()
-    print("✅ Exam inserted.")
+    print("Exam inserted.")
 
 def insert_marks():
-    sid = int(input("Enter Student ID: "))
-    subj_id = int(input("Enter Subject ID: "))
-    exam_id = int(input("Enter Exam ID: "))
-    w = float(input("Enter Written Marks: "))
-    p = float(input("Enter Practical Marks: "))
-    CUR.execute("SELECT max_written,max_practical FROM exams WHERE exam_id=%s",(exam_id,))
+    sid = int(input("\nEnter Student ID: "))
+
+    subj_name = input("Enter Subject Name: ").strip().upper()
+    CUR.execute("SELECT subject_id FROM subjects WHERE subject_name=%s", (subj_name,))
+    subj = CUR.fetchone()
+    if not subj:
+        print("Subject not found.")
+        return
+    subj_id = subj[0]
+
+    exam_name = input("Enter Exam Name: ").strip().upper()
+    CUR.execute("SELECT exam_id,max_written,max_practical FROM exams WHERE exam_name=%s", (exam_name,))
     exam = CUR.fetchone()
     if not exam:
-        print("❌ Exam not found.")
+        print("Exam not found.")
         return
-    total = w+p
+    exam_id,mw,mp = exam
+
+    w = float(input(f"Enter Written Marks (out of {mw}): "))
+    p = float(input(f"Enter Practical Marks (out of {mp}): "))
+    total = w + p
+
     CUR.execute("INSERT INTO marks VALUES (%s,%s,%s,%s,%s,%s)", (sid,subj_id,exam_id,w,p,total))
     DB.commit()
-    print("✅ Marks inserted.")
+    print("Marks inserted.")
 
 def update_student():
-    sid = int(input("Enter Student ID to update: "))
+    sid = int(input("\nEnter Student ID to update: "))
     field = input("Enter field to update (sname, sclass, gender, house, attendance): ")
     value = input("Enter new value: ").upper()
     if field == "attendance":
@@ -139,29 +206,29 @@ def update_student():
     sql = f"UPDATE students SET {field}=%s WHERE id=%s"
     CUR.execute(sql, (value, sid))
     DB.commit()
-    print("✅ Student updated.")
+    print("Student updated.")
 
 def delete_student():
-    sid = int(input("Enter Student ID to delete: "))
+    sid = int(input("\nEnter Student ID to delete: "))
     CUR.execute("DELETE FROM students WHERE id=%s", (sid,))
     DB.commit()
-    print("✅ Student deleted.")
+    print("Student deleted.")
 
 def update_subject():
-    sid = int(input("Enter Subject ID to update: "))
+    sid = int(input("\nEnter Subject ID to update: "))
     newname = input("Enter new subject name: ").upper()
     CUR.execute("UPDATE subjects SET subject_name=%s WHERE subject_id=%s", (newname, sid))
     DB.commit()
-    print("✅ Subject updated.")
+    print("Subject updated.")
 
 def delete_subject():
-    sid = int(input("Enter Subject ID to delete: "))
+    sid = int(input("\nEnter Subject ID to delete: "))
     CUR.execute("DELETE FROM subjects WHERE subject_id=%s", (sid,))
     DB.commit()
-    print("✅ Subject deleted.")
+    print("Subject deleted.")
 
 def update_exam():
-    eid = int(input("Enter Exam ID to update: "))
+    eid = int(input("\nEnter Exam ID to update: "))
     field = input("Enter field to update (exam_name, exam_no, max_written, max_practical): ")
     value = input("Enter new value: ").upper()
     if field in ("max_written", "max_practical", "exam_no"):
@@ -169,34 +236,54 @@ def update_exam():
     sql = f"UPDATE exams SET {field}=%s WHERE exam_id=%s"
     CUR.execute(sql, (value, eid))
     DB.commit()
-    print("✅ Exam updated.")
+    print("Exam updated.")
 
 def delete_exam():
-    eid = int(input("Enter Exam ID to delete: "))
+    eid = int(input("\nEnter Exam ID to delete: "))
     CUR.execute("DELETE FROM exams WHERE exam_id=%s", (eid,))
     DB.commit()
-    print("✅ Exam deleted.")
+    print("Exam deleted.")
 
 def update_marks():
-    sid = int(input("Enter Student ID: "))
-    subj = int(input("Enter Subject ID: "))
-    eid = int(input("Enter Exam ID: "))
-    field = input("Enter field to update (written, practical): ")
+    sid = int(input("\nEnter Student ID: "))
+
+    subj_name = input("Enter Subject Name: ").strip().upper()
+    CUR.execute("SELECT subject_id FROM subjects WHERE subject_name=%s", (subj_name,))
+    subj = CUR.fetchone()
+    if not subj:
+        print("Subject not found.")
+        return
+    subj_id = subj[0]
+
+    exam_name = input("Enter Exam Name: ").strip().upper()
+    CUR.execute("SELECT exam_id FROM exams WHERE exam_name=%s", (exam_name,))
+    exam = CUR.fetchone()
+    if not exam:
+        print("Exam not found.")
+        return
+    exam_id = exam[0]
+
+    field = input("Enter field to update (written, practical): ").strip().lower()
+    if field not in ("written","practical"):
+        print("Invalid field.")
+        return
     value = float(input("Enter new value: "))
 
-    CUR.execute(f"UPDATE marks SET {field}=%s, total=written+practical WHERE id=%s AND subject_id=%s AND exam_id=%s",
-                (value, sid, subj, eid))
+    CUR.execute(f"""
+        UPDATE marks 
+        SET {field}=%s, total=written+practical
+        WHERE id=%s AND subject_id=%s AND exam_id=%s
+    """,(value,sid,subj_id,exam_id))
     DB.commit()
-    print("✅ Marks updated.")
+    print("Marks updated.")
 
 def delete_marks():
-    sid = int(input("Enter Student ID: "))
+    sid = int(input("\nEnter Student ID: "))
     subj = int(input("Enter Subject ID: "))
     eid = int(input("Enter Exam ID: "))
     CUR.execute("DELETE FROM marks WHERE id=%s AND subject_id=%s AND exam_id=%s", (sid, subj, eid))
     DB.commit()
-    print("✅ Marks deleted.")
-
+    print("Marks deleted.")
 
 def show_table(name):
     CUR.execute(f"SELECT * FROM {name}")
@@ -206,265 +293,258 @@ def show_table(name):
     for r in rows:
         print(r)
 
-# PDF REPORT, tanmay bhai mst code tha bss thoda sa hi change kiya hu
+# PDF REPORT
 def generate_report(student_id):
-    # Get profile
-    CUR.execute("SELECT * FROM students WHERE id=%s",(student_id,))
+
+    # Get student info
+    CUR.execute("SELECT * FROM students WHERE id=%s", (student_id,))
     student = CUR.fetchone()
     if not student:
-        print("❌ Student not found.")
+        print("Student not found.")
         return
-    sid,sname,sclass,gender,house,att = student
+    sid, sname, sclass, gender, house, att = student
 
-    # Get marks with subjects+exams
+    # Get marks joined with subjects and exams
     CUR.execute("""
-        SELECT sub.subject_name, e.exam_name, m.written, m.practical, m.total,
-               (e.max_written+e.max_practical) as max_total, e.exam_no
+        SELECT sub.subject_name, e.exam_no, e.exam_name,
+               m.written, m.practical, m.total,
+               (e.max_written+e.max_practical) as max_total
         FROM marks m
         JOIN subjects sub ON m.subject_id=sub.subject_id
         JOIN exams e ON m.exam_id=e.exam_id
         WHERE m.id=%s
         ORDER BY sub.subject_name, e.exam_no
-    """,(student_id,))
+    """, (student_id,))
     rows = CUR.fetchall()
     if not rows:
-        print("No marks found for this student.")
+        print("No marks found.")
         return
 
-    # Convert to DataFrame
-    cols = ["subject","exam","written","practical","total","max_total","exam_no"]
-    df = pd.DataFrame(rows, columns=cols)
+    # Build DataFrame
+    df = pd.DataFrame(rows, columns=["subject","exam_no","exam","written","practical","total","max_total"])
     df["percent"] = (df["total"]/df["max_total"]*100).round(2)
 
-    # Pivot: subjects as rows, exams as column groups (Written/Practical/%)
-    pivot = df.pivot(index="subject", columns="exam", values=["written","practical","percent"])
-    pivot = pivot.sort_index(axis=1, level=1)  # exams in order
-    pivot.columns = [f"{exam}_{metric}" for metric, exam in pivot.columns]
+    # Pivot: subjects as rows, exams as column groups 
+    pivot = df.pivot(index="subject", columns="exam_no", values=["written","practical","percent"])
+    pivot = pivot.sort_index(axis=1, level=1)  
+    pivot = pivot.reorder_levels([1,0], axis=1)  
+    pivot = pivot.sort_index(axis=1, level=0)   
+    pivot = pivot[[col for col in pivot.columns if col[1] in ["written","practical","percent"]]]
+    pivot.columns = [f"Exam{exam}_{metric}" for exam,metric in pivot.columns]
     table_data = pivot.reset_index().round(1).values.tolist()
     col_labels = ["Subject"] + list(pivot.columns)
 
-    # Prepare chart data
-    subjects = list(df["subject"].unique())
-    exams = sorted(df["exam"].unique(), key=lambda e: df[df["exam"]==e]["exam_no"].iloc[0])
+    # Chart data
+    subjects = df["subject"].unique()
+    exams = sorted(df["exam_no"].unique())
     marks_matrix = {sub: [] for sub in subjects}
-    for ename in exams:
+    for ex in exams:
         for sub in subjects:
-            val = df[(df["subject"]==sub) & (df["exam"]==ename)]["percent"]
+            val = df[(df["subject"]==sub) & (df["exam_no"]==ex)]["percent"]
             marks_matrix[sub].append(float(val.iloc[0]) if not val.empty else 0)
 
+    # Plot PDF
     x = np.arange(len(subjects))
-    width = 0.15
-
-    # CREATE PDF
-    filename=f"{sname}_report.pdf"
+    width = 0.2
+    filename = f"{sname}_report.pdf"
     with PdfPages(filename) as pdf:
-        fig,(ax1,ax2)=plt.subplots(2,1,figsize=(12,11))
+        fig, (ax1, ax2) = plt.subplots(2,1,figsize=(12,11))
         ax1.axis("off")
         ax1.text(0.5,1.02,"REPORT CARD",ha="center",fontsize=16,fontweight="bold")
-        ax1.text(0.02,0.95,f"Name: {sname}",fontsize=10)
-        ax1.text(0.02,0.92,f"Class: {sclass}  Gender: {gender}  House: {house}",fontsize=10)
-        ax1.text(0.02,0.89,f"Attendance: {att}%",fontsize=10)
+        ax1.text(0.02,0.95,f"Name: {sname}",fontsize=10,fontweight="bold")
+        ax1.text(0.02,0.91,f"Class: {sclass}",fontsize=10,fontweight="bold")
+        ax1.text(0.02,0.87,f"Gender: {gender}",fontsize=10,fontweight="bold")
+        ax1.text(0.02,0.83,f"House: {house}",fontsize=10,fontweight="bold")
+        ax1.text(0.02,0.79,f"Attendance: {att}%",fontsize=10,fontweight="bold")
 
-        table=ax1.table(cellText=table_data,colLabels=col_labels,loc="center",cellLoc="center")
+        table = ax1.table(cellText=table_data,colLabels=col_labels,loc="center",cellLoc="center")
         table.auto_set_font_size(False); table.set_fontsize(8); table.scale(1.2,1.2)
 
-        for i,ename in enumerate(exams):
+        for i, ex in enumerate(exams):
             vals=[marks_matrix[sub][i] for sub in subjects]
-            ax2.bar(x+i*width-width*len(exams)/2,vals,width,label=ename)
+            ax2.bar(x+i*width-width*len(exams)/2,vals,width,label=f"Exam{ex}")
 
         ax2.set_xticks(x); ax2.set_xticklabels(subjects,rotation=30,ha="right")
-        ax2.set_ylabel("% Marks")
-        ax2.set_title("Performance Across Exams")
+        ax2.set_ylabel("% Marks"); ax2.set_title("Performance Across Exams")
         ax2.legend()
 
         pdf.savefig(fig); plt.close(fig)
 
-    print(f"✅ Report generated: {filename}")
+    print(f"Report generated: {filename}")
 
 
-# MODEL, in dono pe zada dhyan mt do abhi
+
+# MODEL Call
 def load_model():
     if not os.path.exists(MODEL_PATH):
-        print("❌ Model file not found.")
+        print("Model file not found.")
         return None
     model=joblib.load(MODEL_PATH)
-    print("✅ Model loaded.")
+    print("Model loaded.")
     return model
 
+# Predict marks
 def predict_final_exam(student_id):
-    """
-    Predict Exam4 (Final) marks for all subjects of a student
-    using Exam1-Exam3 performance + attendance with the saved ML model.
-    """
     model = load_model()
     if model is None:
         return
 
-    # Fetch student info
-    CUR.execute("SELECT attendance FROM students WHERE id=%s", (student_id,))
-    row = CUR.fetchone()
-    if not row:
-        print("❌ Student not found.")
+    # Get attendance
+    CUR.execute("SELECT attendance FROM students WHERE id=%s",(student_id,))
+    att = CUR.fetchone()
+    if not att:
+        print("No student found.")
         return
-    attendance = row[0]
+    attendance = float(att[0])
 
-    # Fetch marks for first 3 exams
+    # Get subjects 
+    CUR.execute("SELECT subject_id, subject_name FROM subjects ORDER BY subject_id")
+    subject_rows = CUR.fetchall()
+    subjects = [sname for _, sname in subject_rows]
+
+    # Get marks of exams 1–3 for all subjects (percentages)
     CUR.execute("""
-        SELECT sub.subject_name, e.exam_no, m.written, m.practical, e.max_written, e.max_practical
+        SELECT m.subject_id, e.exam_no, m.total/(e.max_written+e.max_practical)*100
         FROM marks m
-        JOIN subjects sub ON m.subject_id=sub.subject_id
-        JOIN exams e ON m.exam_id=e.exam_id
+        JOIN exams e ON m.exam_id = e.exam_id
         WHERE m.id=%s AND e.exam_no IN (1,2,3)
-        ORDER BY sub.subject_name, e.exam_no
-    """, (student_id,))
+        ORDER BY m.subject_id, e.exam_no
+    """,(student_id,))
     rows = CUR.fetchall()
     if not rows:
-        print("❌ No exam data found for this student.")
+        print("No exam data found.")
         return
 
-    # Build feature dictionary
-    data = {}
-    for subj, exam_no, w, p, mw, mp in rows:
-        total = (w or 0) + (p or 0)
-        max_total = (mw or 0) + (mp or 0)
-        perc = round((total / max_total) * 100, 2) if max_total else 0
-        key = f"Exam{exam_no}_{subj.upper().replace(' ', '_')}"
-        data[key] = perc
-
-    # Add attendance
-    data["attendance_pct"] = attendance
-
-    # Create DataFrame for model
-    Xnew = pd.DataFrame([data])
-    Xnew = pd.get_dummies(Xnew)
-
-    # Align columns with trained model
-    model_features = model.feature_names_in_
-    for col in model_features:
-        if col not in Xnew:
-            Xnew[col] = 0
-    Xnew = Xnew[model_features]
+    # Build features in correct order
+    features = [attendance]
+    for exam_no in (1,2,3):
+        for sid,_ in subject_rows:
+            val = [perc for subj,ex,perc in rows if subj==sid and ex==exam_no]
+            features.append(val[0] if val else 0)
 
     # Predict
-    pred = model.predict(Xnew)[0]
-    subjects = sorted(set(r[0] for r in rows))
-    predictions = {subj: round(float(p), 2) for subj, p in zip(subjects, pred)}
+    pred = model.predict([features])[0]
 
-    print("📊 Predicted Exam4 (Final) Marks:")
-    for subj, val in predictions.items():
-        print(f" - {subj}: {val}")
-
-    return predictions
-
+    print("Predicted Exam4 (Final) Marks:")
+    for sub,val in zip(subjects, pred):
+        print(f" - {sub.upper()}: {round(val,2)}")
 
 # ---------------------------
 # MENU
 # ---------------------------
 def main_menu():
     while True:
-        print("\n" + "="*30)
-        print("      STUDENT RESULT SYSTEM")
-        print("="*30)
-        print("1. Insert Data")
-        print("2. Update Data")
-        print("3. Delete Data")
-        print("4. Show Data")
-        print("5. Generate PDF Report")
-        print("6. Predict Marks (abhi isko please use mt krna)")
-        print("7. Exit")
-        print("="*30)
-        choice = input("Choose an option (1-6): ").strip()
+        try:
+            print("\n" + "="*30)
+            print("      STUDENT RESULT SYSTEM")
+            print("="*30)
+            print("1. Insert Data")
+            print("2. Update Data")
+            print("3. Delete Data")
+            print("4. Show Data")
+            print("5. Generate PDF Report")
+            print("6. Predict Marks (predict percentage for final exam.)")
+            print("7. Exit")
+            print("="*30)
+            choice = input("Choose an option (1-7): ").strip()
 
-        if choice == "1":
-            print("\n--- Insert Data ---")
-            print("a. Student")
-            print("b. Subject")
-            print("c. Exam")
-            print("d. Marks")
-            sub_choice = input("Insert (a-d): ").strip().lower()
-            if sub_choice == "a":
-                while True:
-                    insert_student()
-                    more = input("Add another student? (y/n): ").strip().lower()
-                    if more != "y":
-                        break
-            elif sub_choice == "b":
-                while True:
-                    insert_subject()
-                    more = input("Add another subject? (y/n): ").strip().lower()
-                    if more != "y":
-                        break
-            elif sub_choice == "c":
-                while True:
-                    insert_exam()
-                    more = input("Add another exam? (y/n): ").strip().lower()
-                    if more != "y":
-                        break
-            elif sub_choice == "d":
-                while True:
-                    insert_marks()
-                    more = input("Add another marks entry? (y/n): ").strip().lower()
-                    if more != "y":
-                        break
+            if choice == "1":
+                print("\n--- Insert Data ---")
+                print("a. Student")
+                print("b. Subject")
+                print("c. Exam")
+                print("d. Marks")
+                sub_choice = input("Insert (a-d): ").strip().lower()
+                if sub_choice == "a":
+                    while True:
+                        insert_student()
+                        more = input("Add another student? (y/n): ").strip().lower()
+                        if more != "y":
+                            break
+                elif sub_choice == "b":
+                    while True:
+                        insert_subject()
+                        more = input("Add another subject? (y/n): ").strip().lower()
+                        if more != "y":
+                            break
+                elif sub_choice == "c":
+                    while True:
+                        insert_exam()
+                        more = input("Add another exam? (y/n): ").strip().lower()
+                        if more != "y":
+                            break
+                elif sub_choice == "d":
+                    while True:
+                        insert_marks()
+                        more = input("Add another marks entry? (y/n): ").strip().lower()
+                        if more != "y":
+                            break
+                else:
+                    print("Invalid.")
+
+
+            elif choice == "2":
+                print("\n--- Update Data ---")
+                print("a. Student")
+                print("b. Subject")
+                print("c. Exam")
+                print("d. Marks")
+                sub_choice = input("Update (a-d): ").strip().lower()
+                if sub_choice == "a": update_student()
+                elif sub_choice == "b": update_subject()
+                elif sub_choice == "c": update_exam()
+                elif sub_choice == "d": update_marks()
+                else: print("Invalid.")
+
+            elif choice == "3":
+                print("\n--- Delete Data ---")
+                print("a. Student")
+                print("b. Subject")
+                print("c. Exam")
+                print("d. Marks")
+                sub_choice = input("Delete (a-d): ").strip().lower()
+                if sub_choice == "a": delete_student()
+                elif sub_choice == "b": delete_subject()
+                elif sub_choice == "c": delete_exam()
+                elif sub_choice == "d": delete_marks()
+                else: print("Invalid.")
+
+            elif choice == "4":
+                print("\n--- Show Data ---")
+                print("a. Students")
+                print("b. Subjects")
+                print("c. Exams")
+                print("d. Marks")
+                sub_choice = input("Show (a-d): ").strip().lower()
+                if sub_choice == "a": show_table("students")
+                elif sub_choice == "b": show_table("subjects")
+                elif sub_choice == "c": show_table("exams")
+                elif sub_choice == "d": show_table("marks")
+                else: print("Invalid.")
+
+            elif choice == "5":
+                print("\n--- Generate PDF Report ---")
+                sid = int(input("Enter Student ID: "))
+                generate_report(sid)
+
+            elif choice == "7":
+                print("exiting......")
+                break
+
+            elif choice == "6":
+                print('''!DISCLAIMER: available only for class XI and XII students.
+                Only if the marks of all three exams are available.''')
+                ch = input("Do you want to continue(y/n):")
+                if ch == 'y':
+                    sid = int(input("Enter Student ID: "))
+                    predict_final_exam(sid)
+
             else:
-                print("Invalid.")
-
-
-        elif choice == "2":
-            print("\n--- Update Data ---")
-            print("a. Student")
-            print("b. Subject")
-            print("c. Exam")
-            print("d. Marks")
-            sub_choice = input("Update (a-d): ").strip().lower()
-            if sub_choice == "a": update_student()
-            elif sub_choice == "b": update_subject()
-            elif sub_choice == "c": update_exam()
-            elif sub_choice == "d": update_marks()
-            else: print("Invalid.")
-
-        elif choice == "3":
-            print("\n--- Delete Data ---")
-            print("a. Student")
-            print("b. Subject")
-            print("c. Exam")
-            print("d. Marks")
-            sub_choice = input("Delete (a-d): ").strip().lower()
-            if sub_choice == "a": delete_student()
-            elif sub_choice == "b": delete_subject()
-            elif sub_choice == "c": delete_exam()
-            elif sub_choice == "d": delete_marks()
-            else: print("Invalid.")
-
-        elif choice == "4":
-            print("\n--- Show Data ---")
-            print("a. Students")
-            print("b. Subjects")
-            print("c. Exams")
-            print("d. Marks")
-            sub_choice = input("Show (a-d): ").strip().lower()
-            if sub_choice == "a": show_table("students")
-            elif sub_choice == "b": show_table("subjects")
-            elif sub_choice == "c": show_table("exams")
-            elif sub_choice == "d": show_table("marks")
-            else: print("Invalid.")
-
-        elif choice == "5":
-            print("\n--- Generate PDF Report ---")
-            sid = int(input("Enter Student ID: "))
-            generate_report(sid)
-
-        elif choice == "7":
-            print("Bye.")
-            break
-
-        elif choice == "6":
-            sid = int(input("Enter Student ID: "))
-            predict_final_exam(sid)
-
-
-        else:
-            print("Invalid option. Please choose between 1-6.")
+                print("Invalid option. Please choose between 1-6.")
+        
+        except Exception as e:
+            print("Error:", e)
 
 if __name__=="__main__":
-    main_menu()
+    if login():
+        main_menu()
