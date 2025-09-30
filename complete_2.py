@@ -540,11 +540,12 @@ def main_menu():
                     predict_final_exam(sid)
 
             else:
-                print("Invalid option. Please choose between 1-6.")
+                print("Invalid option. Please choose between 1-7.")
         
         except Exception as e:
             print("Error:", e)
 
 if __name__=="__main__":
     if login():
+
         main_menu()
